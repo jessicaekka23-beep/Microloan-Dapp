@@ -1,69 +1,161 @@
-import Image from "next/image";
+"use client";
+
+import { useRef, useState } from "react";
+import { Contract } from "ethers";
+import { useWeb3 } from "../hooks/useWeb3";
+import { Navbar } from "../components/Navbar";
+import { StatsOverview } from "../components/StatsOverview";
+import { BorrowerPanel } from "../components/BorrowerPanel";
+import { LenderPanel } from "../components/LenderPanel";
+import { DocsSection } from "../components/DocsSection";
+import { btn } from "../components/ui";
+import {
+  CONTRACT_ADDRESS,
+  MICRO_LOAN_ABI,
+  LoanAction,
+  LoanData,
+  formatTxError,
+} from "../lib/contract";
+
+type Tab = "borrower" | "lender" | "docs";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "borrower", label: "Borrow" },
+  { id: "lender", label: "Lend" },
+  { id: "docs", label: "How it works" },
+];
 
 export default function Home() {
+  const w = useWeb3();
+  const [tab, setTab] = useState<Tab>("borrower");
+  const [toast, setToast] = useState<{ ok: boolean; text: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const notify = (ok: boolean, text: string) => {
+    clearTimeout(toastTimer.current);
+    setToast({ ok, text });
+    toastTimer.current = setTimeout(() => setToast(null), 6000);
+  };
+
+  // Every transaction goes through here: guard, send, wait, refresh, report errors once.
+  const runTx = async (call: (c: Contract) => Promise<any>, successText: string): Promise<boolean> => {
+    if (!w.signer) {
+      notify(false, "Connect your wallet first.");
+      return false;
+    }
+    if (!w.isSepolia) {
+      notify(false, "Switch your wallet to Sepolia.");
+      return false;
+    }
+
+    try {
+      const tx = await call(new Contract(CONTRACT_ADDRESS, MICRO_LOAN_ABI, w.signer));
+      notify(true, "Transaction sent. Waiting for confirmation…");
+      await tx.wait();
+      await Promise.all([w.fetchLoans(), w.refreshWallet()]);
+      notify(true, successText);
+      return true;
+    } catch (e) {
+      notify(false, formatTxError(e));
+      return false;
+    }
+  };
+
+  const onCreate = (principal: bigint, repayment: bigint, dueDate: bigint) =>
+    runTx((c) => c.requestLoan(principal, repayment, dueDate), "Loan requested.");
+
+  const onAction = (action: LoanAction, loan: LoanData) => {
+    const id = loan.id;
+    switch (action) {
+      case "fund":
+        return runTx((c) => c.fund(id, { value: loan.principal }), `Loan #${id} funded.`);
+      case "withdraw":
+        return runTx((c) => c.withdrawToBorrower(id), `Loan #${id} withdrawn to your wallet.`);
+      case "repay":
+        return runTx((c) => c.repay(id, { value: loan.repayment }), `Loan #${id} repaid.`);
+      case "default":
+        return runTx((c) => c.markDefault(id), `Loan #${id} marked as defaulted.`);
+      case "cancel":
+        return runTx((c) => c.cancelRequest(id), `Loan #${id} cancelled.`);
+      case "reclaim":
+        return runTx((c) => c.reclaimFunding(id), `Loan #${id} refunded to you.`);
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-neutral-50 text-neutral-900 antialiased selection:bg-neutral-900 selection:text-white">
+      <Navbar
+        account={w.account}
+        balance={w.balance}
+        isSepolia={w.isSepolia}
+        onConnect={w.connect}
+        onSwitchNetwork={w.switchNetwork}
+      />
+
+      <main className="mx-auto max-w-5xl space-y-8 px-4 py-10 sm:px-6">
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Small loans for artisans</h1>
+            <p className="mt-1 max-w-xl text-sm text-neutral-500">
+              Borrow and lend directly. A smart contract holds the money in escrow and enforces the terms.
+            </p>
+          </div>
+          <button onClick={w.fetchLoans} disabled={w.loading} className={`${btn.base} ${btn.secondary} shrink-0`}>
+            {w.loading ? "Refreshing…" : "Refresh"}
+          </button>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {w.error && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{w.error}</div>
+        )}
+
+        <StatsOverview loans={w.loans} />
+
+        <div className="flex gap-6 border-b border-neutral-200">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`-mb-px border-b-2 pb-3 text-sm font-medium transition-colors ${
+                tab === t.id
+                  ? "border-neutral-900 text-neutral-900"
+                  : "border-transparent text-neutral-500 hover:text-neutral-800"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
+
+        {tab === "borrower" && (
+          <BorrowerPanel
+            account={w.account}
+            loans={w.loans}
+            paused={w.paused}
+            maxPrincipal={w.maxPrincipal}
+            onCreate={onCreate}
+            onAction={onAction}
+          />
+        )}
+        {tab === "lender" && (
+          <LenderPanel account={w.account} loans={w.loans} paused={w.paused} onAction={onAction} />
+        )}
+        {tab === "docs" && <DocsSection />}
       </main>
+
+      <footer className="border-t border-neutral-200 py-6 text-center text-xs text-neutral-500">
+        Blockchain Technology class project. Sepolia testnet only, no real money.
+      </footer>
+
+      {toast && (
+        <div
+          role="status"
+          className={`fixed bottom-6 right-6 z-50 max-w-sm rounded-md px-4 py-3 text-sm text-white shadow-lg ${
+            toast.ok ? "bg-neutral-900" : "bg-red-600"
+          }`}
+        >
+          {toast.text}
+        </div>
+      )}
     </div>
   );
 }
