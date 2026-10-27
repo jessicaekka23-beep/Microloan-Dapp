@@ -2,7 +2,7 @@ import { BrowserProvider, Contract, type JsonRpcSigner } from "ethers";
 import artifact from "./MicroLoan.json";
 
 // Set in frontend/.env.local (see .env.example). Must be the Sepolia MicroLoan contract.
-export const MICRO_LOAN_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ?? "";
+export const MICRO_LOAN_ADDRESS = process.env.NEXT_PUBLIC_CONTRACT_ADDRESS || "0x3d43510D4e1E5408d463Ff8E57e4EABA1657f934";
 export const MICRO_LOAN_ABI = artifact.abi;
 
 declare global {
